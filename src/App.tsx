@@ -1630,25 +1630,36 @@ export default function App() {
     const combinations = Math.pow(2, inputs.length);
     let allPassed = true;
 
-    // Reset all manual switches in the grid to OFF before starting verification
+    // 1. Thoroughly wipe all dynamic state from the grid before verification
     if (gridDataRef.current) {
-      const resetGrid = gridDataRef.current.map(row => row.map(cell => {
-        if (cell.type === ComponentType.INPUT_LEVER && !cell.isLocked) {
-          return { ...cell, manualToggle: false, state: false, nextState: false };
+      const cleanGrid = gridDataRef.current.map(row => row.map(cell => {
+        const next = { ...cell };
+        // Reset power states
+        next.state = false;
+        next.nextState = false;
+        next.stateH = false;
+        next.stateV = false;
+        // Reset interactive state if not locked
+        if (!cell.isLocked) {
+          next.manualToggle = false;
         }
-        return cell;
+        // Reset component-specific state
+        if (cell.history) {
+          next.history = [];
+        }
+        return next;
       }));
-      setGridData(resetGrid);
-      gridDataRef.current = resetGrid;
+      setGridData(cleanGrid);
+      gridDataRef.current = cleanGrid;
     }
 
-    // Power down all switches initially
+    // Power down all switches initially in the forcedLevers state
     const initialState: Record<string, boolean> = {};
     inputs.forEach(input => {
       initialState[`${input.x},${input.y}`] = false;
     });
     setForcedLevers(initialState);
-    await wait(1000); // Settle simulation
+    await wait(1500); // Settle simulation after reset
 
     for (let i = 0; i < combinations; i++) {
       const state: Record<string, boolean> = {};
@@ -1661,7 +1672,7 @@ export default function App() {
       });
       setForcedLevers(state);
 
-      await wait(1000); // Wait for logic to propagate
+      await wait(1500); // Wait for logic to propagate to outputs
 
       const currentGrid = gridDataRef.current;
       if (!currentGrid) break;
@@ -1736,7 +1747,7 @@ export default function App() {
 
         for (const step of testSequence) {
           setForcedLevers({ '1,4': step.s, '1,10': step.r });
-          await wait(1200);
+          await wait(1500);
           if (gridDataRef.current?.[7][13].state !== step.exp) {
             allPassed = false;
             setFailureMessage(`LATCH ERROR: [${step.desc}]. Output should be ${step.exp ? 'ON' : 'OFF'}.`);
