@@ -501,27 +501,16 @@ export const LogicCanvas: React.FC<LogicCanvasProps> = ({
     if (!canvas) return;
 
     const onWheel = (e: WheelEvent) => {
-      if (!setZoom) return;
       e.preventDefault();
-      const zoomFactor = -e.deltaY * 0.001;
-      let newZoom = Math.min(Math.max(0.1, zoom + zoomFactor), 3.0);
-
-      const rect = canvas.getBoundingClientRect();
-      const mouseX = e.clientX - rect.left;
-      const mouseY = e.clientY - rect.top;
-      const ratio = newZoom / zoom;
-
       setCamera(prev => ({
-        x: mouseX - (mouseX - prev.x) * ratio,
-        y: mouseY - (mouseY - prev.y) * ratio
+        x: prev.x - e.deltaX,
+        y: prev.y - e.deltaY
       }));
-
-      setZoom(newZoom);
     };
 
     canvas.addEventListener('wheel', onWheel, { passive: false });
     return () => canvas.removeEventListener('wheel', onWheel);
-  }, [zoom, setZoom, camera.x, camera.y]);
+  }, []);
 
   const lastProcessedCoordsRef = useRef<{ x: number, y: number } | null>(null);
 
