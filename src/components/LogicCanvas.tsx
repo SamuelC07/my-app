@@ -502,6 +502,7 @@ export const LogicCanvas: React.FC<LogicCanvasProps> = ({
 
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
+      // Pan camera instead of zooming
       setCamera(prev => ({
         x: prev.x - e.deltaX,
         y: prev.y - e.deltaY
@@ -510,7 +511,7 @@ export const LogicCanvas: React.FC<LogicCanvasProps> = ({
 
     canvas.addEventListener('wheel', onWheel, { passive: false });
     return () => canvas.removeEventListener('wheel', onWheel);
-  }, []);
+  }, []); // No longer depends on zoom since it only pans
 
   const lastProcessedCoordsRef = useRef<{ x: number, y: number } | null>(null);
 
