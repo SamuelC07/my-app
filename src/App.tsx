@@ -1230,122 +1230,301 @@ const PIANO_NOTES: Record<string, number> = {
   'C5': 523.25, 'C#5': 554.37, 'D5': 587.33, 'D#5': 622.25, 'E5': 659.25, 'F5': 698.46, 'F#5': 739.99, 'G5': 783.99, 'G#5': 830.61, 'A5': 880.00, 'A#5': 932.33, 'B5': 987.77
 };
 
+// ── Audio Engine ───────────────────────────────────────────────────────────────
+
 let audioCtx: AudioContext | null = null;
 
-const playNote = (key: string) => {
+const getAudio = (): AudioContext | null => {
   try {
     if (!audioCtx) audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
     if (audioCtx.state === 'suspended') audioCtx.resume();
-
-    const freq = PIANO_NOTES[key] || 440;
-    const osc = audioCtx.createOscillator();
-    const gain = audioCtx.createGain();
-
-    osc.type = 'triangle';
-    osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
-
-    gain.gain.setValueAtTime(0, audioCtx.currentTime);
-    gain.gain.linearRampToValueAtTime(0.4, audioCtx.currentTime + 0.05);
-    gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.8);
-
-    osc.connect(gain);
-    gain.connect(audioCtx.destination);
-
-    osc.start();
-    osc.stop(audioCtx.currentTime + 0.8);
-  } catch (e) {
-    console.error("Audio playback failed:", e);
+    return audioCtx;
+  } catch {
+    return null;
   }
 };
 
-const playPlacementSound = (type: ComponentType) => {
+// ── Note Block Piano ──────────────────────────────────────────────────────────
+const playNote = (key: string) => {
+  const ctx = getAudio();
+  if (!ctx) return;
   try {
-    if (!audioCtx) audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const freq = PIANO_NOTES[key] || 440;
+    const t = ctx.currentTime;
 
-    const osc = audioCtx.createOscillator();
-    const gain = audioCtx.createGain();
-
-    let freq = 440;
-    let type_osc: OscillatorType = 'sine';
-    let duration = 0.1;
-
-    switch (type) {
-      case ComponentType.WIRE:
-        freq = 880;
-        type_osc = 'sine';
-        duration = 0.05;
-        break;
-      case ComponentType.EMPTY: // Eraser
-        freq = 150;
-        type_osc = 'square';
-        duration = 0.15;
-        break;
-      case ComponentType.INPUT_LEVER:
-      case ComponentType.OUTPUT_LAMP:
-      case ComponentType.NOTE_BLOCK:
-        freq = 660;
-        type_osc = 'triangle';
-        duration = 0.2;
-        break;
-      default:
-        freq = 330;
-        type_osc = 'sine';
-        duration = 0.1;
-    }
-
-    osc.type = type_osc;
-    osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
-    osc.frequency.exponentialRampToValueAtTime(freq / 2, audioCtx.currentTime + duration);
-
-    gain.gain.setValueAtTime(0.05, audioCtx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
-
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(freq, t);
+    gain.gain.setValueAtTime(0, t);
+    gain.gain.linearRampToValueAtTime(0.35, t + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 1.2);
     osc.connect(gain);
-    gain.connect(audioCtx.destination);
+    gain.connect(ctx.destination);
+    osc.start(t);
+    osc.stop(t + 1.2);
 
-    osc.start();
-    osc.stop(audioCtx.currentTime + duration);
+    // Attack click for piano hammer feel
+    const clickBuf = ctx.createBuffer(1, Math.ceil(ctx.sampleRate * 0.02), ctx.sampleRate);
+    const data = clickBuf.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / data.length);
+    const clickSrc = ctx.createBufferSource();
+    const clickGain = ctx.createGain();
+    clickSrc.buffer = clickBuf;
+    clickGain.gain.setValueAtTime(0.06, t);
+    clickGain.gain.exponentialRampToValueAtTime(0.001, t + 0.02);
+    clickSrc.connect(clickGain);
+    clickGain.connect(ctx.destination);
+    clickSrc.start(t);
   } catch (e) {}
 };
 
+// ── Component Placement Sounds ────────────────────────────────────────────────
+const playPlacementSound = (type: ComponentType) => {
+  const ctx = getAudio();
+  if (!ctx) return;
+  try {
+    const t = ctx.currentTime;
+
+    // Helper: pitched oscillator with envelope
+    const oscEnv = (waveType: OscillatorType, freq: number, endFreq: number, dur: number, vol: number) => {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = waveType;
+      o.frequency.setValueAtTime(freq, t);
+      o.frequency.exponentialRampToValueAtTime(endFreq, t + dur);
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(vol, t + 0.005);
+      g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+      o.connect(g); g.connect(ctx.destination);
+      o.start(t); o.stop(t + dur);
+    };
+
+    // Helper: filtered noise burst
+    const noiseEnv = (dur: number, vol: number, filterFreq: number) => {
+      const buf = ctx.createBuffer(1, Math.ceil(ctx.sampleRate * dur), ctx.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+      const src = ctx.createBufferSource();
+      const filt = ctx.createBiquadFilter();
+      const g = ctx.createGain();
+      src.buffer = buf;
+      filt.type = 'bandpass'; filt.frequency.value = filterFreq; filt.Q.value = 2;
+      src.connect(filt); filt.connect(g);
+      g.gain.setValueAtTime(vol, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+      g.connect(ctx.destination);
+      src.start(t); src.stop(t + dur);
+    };
+
+    switch (type) {
+      case ComponentType.WIRE:
+        // Crisp metallic high-freq tick
+        oscEnv('sine', 2800, 1100, 0.055, 0.055);
+        noiseEnv(0.022, 0.022, 3800);
+        break;
+
+      case ComponentType.INVERTER:
+        // Two-tone descending electronic blip
+        oscEnv('square', 1100, 550, 0.07, 0.045);
+        setTimeout(() => {
+          const ctx2 = getAudio(); if (!ctx2) return;
+          const t2 = ctx2.currentTime;
+          const o = ctx2.createOscillator(); const g = ctx2.createGain();
+          o.type = 'square'; o.frequency.setValueAtTime(800, t2);
+          o.frequency.exponentialRampToValueAtTime(400, t2 + 0.065);
+          g.gain.setValueAtTime(0.035, t2); g.gain.exponentialRampToValueAtTime(0.001, t2 + 0.065);
+          o.connect(g); g.connect(ctx2.destination); o.start(t2); o.stop(t2 + 0.065);
+        }, 60);
+        break;
+
+      case ComponentType.INPUT_LEVER:
+        // Chunky mechanical thunk — low thud + transient click
+        oscEnv('triangle', 200, 55, 0.2, 0.14);
+        noiseEnv(0.07, 0.08, 900);
+        oscEnv('sine', 420, 180, 0.12, 0.05);
+        break;
+
+      case ComponentType.OUTPUT_LAMP: {
+        // Warm glass bell — FM synthesis
+        const carrier = ctx.createOscillator();
+        const mod = ctx.createOscillator();
+        const modG = ctx.createGain();
+        const outG = ctx.createGain();
+        carrier.type = 'sine'; carrier.frequency.setValueAtTime(660, t);
+        mod.type = 'sine'; mod.frequency.setValueAtTime(660 * 2.1, t);
+        modG.gain.setValueAtTime(660 * 3, t);
+        modG.gain.exponentialRampToValueAtTime(0.01, t + 0.5);
+        mod.connect(modG); modG.connect(carrier.frequency);
+        outG.gain.setValueAtTime(0, t);
+        outG.gain.linearRampToValueAtTime(0.22, t + 0.01);
+        outG.gain.exponentialRampToValueAtTime(0.001, t + 1.0);
+        carrier.connect(outG); outG.connect(ctx.destination);
+        carrier.start(t); carrier.stop(t + 1.0);
+        mod.start(t); mod.stop(t + 1.0);
+        break;
+      }
+
+      case ComponentType.BRIDGE:
+        // Hollow wooden knock — low pitched noise pop
+        oscEnv('sine', 240, 90, 0.14, 0.12);
+        noiseEnv(0.1, 0.085, 450);
+        break;
+
+      case ComponentType.BUFFER: {
+        // Capacitor charge — rising sawtooth sweep
+        const o = ctx.createOscillator(); const g = ctx.createGain();
+        o.type = 'sawtooth';
+        o.frequency.setValueAtTime(70, t);
+        o.frequency.exponentialRampToValueAtTime(700, t + 0.28);
+        g.gain.setValueAtTime(0, t);
+        g.gain.linearRampToValueAtTime(0.04, t + 0.04);
+        g.gain.exponentialRampToValueAtTime(0.001, t + 0.28);
+        o.connect(g); g.connect(ctx.destination);
+        o.start(t); o.stop(t + 0.28);
+        break;
+      }
+
+      case ComponentType.NOTE_BLOCK:
+        // Marimba mallet — warm triangle pluck
+        oscEnv('triangle', 523.25, 523.25, 0.5, 0.28);
+        noiseEnv(0.025, 0.035, 2200);
+        break;
+
+      case ComponentType.EMPTY:
+        // Dull erase scrub — low filtered noise
+        noiseEnv(0.09, 0.055, 600);
+        oscEnv('sine', 110, 50, 0.09, 0.05);
+        break;
+
+      default:
+        oscEnv('sine', 440, 300, 0.1, 0.05);
+    }
+  } catch (e) {}
+};
+
+// ── Level Win Fanfare ─────────────────────────────────────────────────────────
+// Ascending D-major arpeggio → sustained full chord bloom.
+const playWinFanfare = () => {
+  const ctx = getAudio();
+  if (!ctx) return;
+  try {
+    const arpeggioFreqs = [293.66, 369.99, 440.00, 587.33]; // D4 F#4 A4 D5
+    const step = 0.11;
+
+    arpeggioFreqs.forEach((freq, i) => {
+      const t = ctx.currentTime + i * step;
+
+      // FM bell tone
+      const carrier = ctx.createOscillator();
+      const mod = ctx.createOscillator();
+      const modG = ctx.createGain();
+      const outG = ctx.createGain();
+      carrier.type = 'sine'; carrier.frequency.setValueAtTime(freq, t);
+      mod.type = 'sine'; mod.frequency.setValueAtTime(freq * 2.03, t);
+      modG.gain.setValueAtTime(freq * 2.5, t);
+      modG.gain.exponentialRampToValueAtTime(0.01, t + 1.6);
+      mod.connect(modG); modG.connect(carrier.frequency);
+      outG.gain.setValueAtTime(0, t);
+      outG.gain.linearRampToValueAtTime(0.28, t + 0.012);
+      outG.gain.exponentialRampToValueAtTime(0.001, t + 1.6);
+      carrier.connect(outG); outG.connect(ctx.destination);
+      carrier.start(t); carrier.stop(t + 1.6);
+      mod.start(t); mod.stop(t + 1.6);
+
+      // Triangle fifth harmonic layer
+      const o2 = ctx.createOscillator(); const g2 = ctx.createGain();
+      o2.type = 'triangle'; o2.frequency.setValueAtTime(freq * 1.5, t);
+      g2.gain.setValueAtTime(0, t);
+      g2.gain.linearRampToValueAtTime(0.07, t + 0.02);
+      g2.gain.exponentialRampToValueAtTime(0.001, t + 1.1);
+      o2.connect(g2); g2.connect(ctx.destination);
+      o2.start(t); o2.stop(t + 1.1);
+    });
+
+    // Full D-major chord bloom after arpeggio completes
+    const chordT = ctx.currentTime + arpeggioFreqs.length * step + 0.08;
+    [146.83, 220.00, 293.66, 369.99, 440.00].forEach((freq, i) => {
+      const o = ctx.createOscillator(); const g = ctx.createGain();
+      o.type = i === 0 ? 'triangle' : 'sine';
+      o.frequency.setValueAtTime(freq, chordT);
+      g.gain.setValueAtTime(0, chordT);
+      g.gain.linearRampToValueAtTime(0.13, chordT + 0.07);
+      g.gain.setValueAtTime(0.13, chordT + 1.4);
+      g.gain.linearRampToValueAtTime(0, chordT + 2.8);
+      o.connect(g); g.connect(ctx.destination);
+      o.start(chordT); o.stop(chordT + 3.0);
+    });
+  } catch (e) {}
+};
+
+// ── Ambient Music ─────────────────────────────────────────────────────────────
+// Five-layer generative pad: sub-bass throb, three modulated mid drones,
+// a high shimmer, and a slowly arpeggiated pentatonic melody.
+// Everything fades in over 8 seconds via a master gain node.
 let ambientMusicStarted = false;
 const startAmbientMusic = () => {
   if (ambientMusicStarted) return;
   ambientMusicStarted = true;
-  
+  const ctx = getAudio();
+  if (!ctx) return;
   try {
-    if (!audioCtx) audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-    if (audioCtx.state === 'suspended') audioCtx.resume();
-    
-    const createDrone = (freq: number, volume: number) => {
-      const osc = audioCtx!.createOscillator();
-      const gain = audioCtx!.createGain();
-      const lfo = audioCtx!.createOscillator();
-      const lfoGain = audioCtx!.createGain();
+    const t = ctx.currentTime;
 
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(freq, audioCtx!.currentTime);
-      
-      gain.gain.setValueAtTime(0, audioCtx!.currentTime);
-      gain.gain.linearRampToValueAtTime(volume, audioCtx!.currentTime + 5);
+    // Master gain — slow fade-in so it never startles
+    const master = ctx.createGain();
+    master.gain.setValueAtTime(0, t);
+    master.gain.linearRampToValueAtTime(1, t + 8);
+    master.connect(ctx.destination);
 
-      lfo.type = 'sine';
-      lfo.frequency.setValueAtTime(0.05 + Math.random() * 0.1, audioCtx!.currentTime);
-      lfoGain.gain.setValueAtTime(volume * 0.3, audioCtx!.currentTime);
-      
-      lfo.connect(lfoGain);
-      lfoGain.connect(gain.gain);
-      osc.connect(gain);
-      gain.connect(audioCtx!.destination);
-      
-      osc.start();
-      lfo.start();
+    // Helper: sustained drone with slow LFO tremolo
+    const drone = (freq: number, vol: number, lfoRate: number, lfoDepth: number) => {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      const lfo = ctx.createOscillator();
+      const lfoG = ctx.createGain();
+      o.type = 'sine'; o.frequency.value = freq;
+      g.gain.value = vol;
+      lfo.type = 'sine'; lfo.frequency.value = lfoRate;
+      lfoG.gain.value = lfoDepth;
+      lfo.connect(lfoG); lfoG.connect(g.gain);
+      o.connect(g); g.connect(master);
+      o.start(); lfo.start();
     };
 
-    createDrone(73.42, 0.02); // D2
-    createDrone(110.00, 0.02); // A2
-    createDrone(146.83, 0.01); // D3
+    drone(36.71,  0.020, 0.04,                    0.006); // Sub-bass D1 throb
+    drone(73.42,  0.024, 0.07 + Math.random() * 0.03, 0.009); // D2
+    drone(110.00, 0.019, 0.05 + Math.random() * 0.03, 0.007); // A2
+    drone(146.83, 0.013, 0.09 + Math.random() * 0.04, 0.005); // D3
+    drone(440.00, 0.007, 0.13 + Math.random() * 0.05, 0.003); // A4 shimmer
+
+    // Soft reverb pad — slightly detuned layer for width
+    drone(73.50,  0.010, 0.06, 0.004);
+    drone(110.06, 0.008, 0.08, 0.003);
+
+    // Pentatonic melody pulse (D3 pentatonic: D F A C D)
+    const melodyFreqs = [146.83, 174.61, 220.00, 261.63, 293.66];
+    let mIdx = 0;
+
+    const scheduleMelody = () => {
+      const ctx2 = getAudio(); if (!ctx2) return;
+      const mt = ctx2.currentTime;
+      const freq = melodyFreqs[mIdx % melodyFreqs.length];
+      mIdx++;
+
+      const o = ctx2.createOscillator(); const g = ctx2.createGain();
+      o.type = 'triangle'; o.frequency.setValueAtTime(freq, mt);
+      g.gain.setValueAtTime(0, mt);
+      g.gain.linearRampToValueAtTime(0.022, mt + 0.4);
+      g.gain.setValueAtTime(0.022, mt + 1.6);
+      g.gain.linearRampToValueAtTime(0, mt + 2.4);
+      o.connect(g); g.connect(ctx2.destination);
+      o.start(mt); o.stop(mt + 2.6);
+
+      setTimeout(scheduleMelody, 4200 + Math.random() * 4000);
+    };
+
+    setTimeout(scheduleMelody, 7000);
   } catch (e) {}
 };
 
@@ -1984,6 +2163,7 @@ export default function App() {
       setIsPlaying(false);
       setTickRate(10);
       setForcedLevers({});
+      playWinFanfare();
       setIsWinning(true);
       setCompletedLevels(prev => prev.includes(currentLevel.id) ? prev : [...prev, currentLevel.id]);
       if (gridDataRef.current) setSavedSolutions(prev => ({ ...prev, [currentLevel.id]: gridDataRef.current! }));
@@ -2027,6 +2207,7 @@ export default function App() {
     setIsPlaying(false);
     setTickRate(10);
     setForcedLevers({});
+    playWinFanfare();
     setIsWinning(true);
     setCompletedLevels(prev => prev.includes(currentLevel.id) ? prev : [...prev, currentLevel.id]);
     if (gridDataRef.current) setSavedSolutions(prev => ({ ...prev, [currentLevel.id]: gridDataRef.current! }));
