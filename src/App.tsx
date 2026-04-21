@@ -419,7 +419,7 @@ const SandboxView = ({
   selectedBlueprint, setSelectedBlueprint, blueprints, setBlueprints, setIsSaving, isSaving,
   newBlueprintName, setNewBlueprintName, confirmSaveBlueprint, handleExport, handleSelectBlueprint,
   zoom, setZoom, deleteSelected, setShowDeleteConfirm, activeSandbox, noteConfig, setNoteConfig,
-  bufferConfig, setBufferConfig, onNotePlay
+  bufferConfig, setBufferConfig, onNotePlay, onPlace
 }: any) => {
   const [isSidebarExpanded, setIsSidebarExpanded] = useState(false);
   const [helpType, setHelpType] = useState<ComponentType | null>(null);
@@ -611,6 +611,7 @@ const SandboxView = ({
               onNoteBlockClick={(x, y, note) => setNoteConfig({ x, y, currentNote: note })}
               onBufferClick={(x, y, delay) => setBufferConfig({ x, y, currentDelay: delay })}
               onNotePlay={onNotePlay}
+              onPlace={onPlace}
             />
           </div>
         </div>
@@ -912,7 +913,7 @@ const LevelPlayView = ({
   zoom, setZoom, toolMode, setToolMode, selection, setSelection, setIsSaving, isSaving,
   blueprints, setBlueprints, handleSelectBlueprint, selectedBlueprint, setSelectedBlueprint,
   isGuidingSelection, setIsGuidingSelection, deleteSelected, setShowDeleteConfirm, setShowLevelResetConfirm,
-  noteConfig, setNoteConfig, bufferConfig, setBufferConfig, onNotePlay
+  noteConfig, setNoteConfig, bufferConfig, setBufferConfig, onNotePlay, onPlace
 }: any) => {
   const [showHint, setShowHint] = useState(false);
   const [hintTimer, setHintTimer] = useState(0);
@@ -1136,6 +1137,7 @@ const LevelPlayView = ({
               onNoteBlockClick={(x, y, note) => setNoteConfig({ x, y, currentNote: note })}
               onBufferClick={(x, y, delay) => setBufferConfig({ x, y, currentDelay: delay })}
               onNotePlay={onNotePlay}
+              onPlace={onPlace}
             />
           </div>
 
@@ -1254,6 +1256,97 @@ const playNote = (key: string) => {
   } catch (e) {
     console.error("Audio playback failed:", e);
   }
+};
+
+const playPlacementSound = (type: ComponentType) => {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+
+    let freq = 440;
+    let type_osc: OscillatorType = 'sine';
+    let duration = 0.1;
+
+    switch (type) {
+      case ComponentType.WIRE:
+        freq = 880;
+        type_osc = 'sine';
+        duration = 0.05;
+        break;
+      case ComponentType.EMPTY: // Eraser
+        freq = 150;
+        type_osc = 'square';
+        duration = 0.15;
+        break;
+      case ComponentType.INPUT_LEVER:
+      case ComponentType.OUTPUT_LAMP:
+      case ComponentType.NOTE_BLOCK:
+        freq = 660;
+        type_osc = 'triangle';
+        duration = 0.2;
+        break;
+      default:
+        freq = 330;
+        type_osc = 'sine';
+        duration = 0.1;
+    }
+
+    osc.type = type_osc;
+    osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(freq / 2, audioCtx.currentTime + duration);
+
+    gain.gain.setValueAtTime(0.05, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+
+    osc.start();
+    osc.stop(audioCtx.currentTime + duration);
+  } catch (e) {}
+};
+
+let ambientMusicStarted = false;
+const startAmbientMusic = () => {
+  if (ambientMusicStarted) return;
+  ambientMusicStarted = true;
+  
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    
+    const createDrone = (freq: number, volume: number) => {
+      const osc = audioCtx!.createOscillator();
+      const gain = audioCtx!.createGain();
+      const lfo = audioCtx!.createOscillator();
+      const lfoGain = audioCtx!.createGain();
+
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, audioCtx!.currentTime);
+      
+      gain.gain.setValueAtTime(0, audioCtx!.currentTime);
+      gain.gain.linearRampToValueAtTime(volume, audioCtx!.currentTime + 5);
+
+      lfo.type = 'sine';
+      lfo.frequency.setValueAtTime(0.05 + Math.random() * 0.1, audioCtx!.currentTime);
+      lfoGain.gain.setValueAtTime(volume * 0.3, audioCtx!.currentTime);
+      
+      lfo.connect(lfoGain);
+      lfoGain.connect(gain.gain);
+      osc.connect(gain);
+      gain.connect(audioCtx!.destination);
+      
+      osc.start();
+      lfo.start();
+    };
+
+    createDrone(73.42, 0.02); // D2
+    createDrone(110.00, 0.02); // A2
+    createDrone(146.83, 0.01); // D3
+  } catch (e) {}
 };
 
 const NoteSelector = ({ currentNote, onSelect, onClose }: { currentNote: string, onSelect: (note: string) => void, onClose: () => void }) => {
@@ -1375,6 +1468,12 @@ export default function App() {
   const [activeSandboxId, setActiveSandboxId] = useState<string | null>(null);
   const activeSandbox = sandboxes.find(s => s.id === activeSandboxId);
 
+  useEffect(() => {
+    const handleGlobalClick = () => startAmbientMusic();
+    window.addEventListener('mousedown', handleGlobalClick);
+    return () => window.removeEventListener('mousedown', handleGlobalClick);
+  }, []);
+
   const [noteConfig, setNoteConfig] = useState<{ x: number, y: number, currentNote: string } | null>(null);
   const [bufferConfig, setBufferConfig] = useState<{ x: number, y: number, currentDelay: number } | null>(null);
 
@@ -1388,16 +1487,6 @@ export default function App() {
   const [zoom, setZoom] = useState(1.0);
   const [showCompletionPrompt, setShowCompletionPrompt] = useState(false);
   const [isGuidingSelection, setIsGuidingSelection] = useState(false);
-
-  const failureQuotes = [
-    "Logic? Never heard of her.",
-    "Your circuit is basically a very complicated way to do nothing.",
-    "Close, but the laws of physics disagree.",
-    "Even my toaster has more logic than this.",
-    "Mission failed. We'll get 'em next time... maybe.",
-    "The electrons are confused. Please help them.",
-    "Computer says NO. (And also LOL)."
-  ];
 
   // Library & Tools State
   const [toolMode, setToolMode] = useState<ToolMode>(ToolMode.PLACE);
@@ -1607,219 +1696,342 @@ export default function App() {
     }
   }, [savedSolutions]);
 
+  // ── Campaign Verification System ──────────────────────────────────────────────
+  // For each level we define an explicit truth table: a list of test cases where
+  // each case specifies exactly which levers to force ON/OFF and what the expected
+  // output state should be for every output lamp.
+  //
+  // The checker:
+  //   1. Resets all grid signal states.
+  //   2. Iterates every test case in order.
+  //   3. For each case, calls setForcedLevers — which directly sets manualToggle
+  //      on the matching INPUT_LEVER cells in the canvas.
+  //   4. Waits for the simulation to propagate (1 200 ms at 60 Hz).
+  //   5. Reads the OUTPUT_LAMP / NOTE_BLOCK states from the live grid ref.
+  //   6. Compares them to the expected values from the truth table.
+  //
+  // Level positions reference (all zero-indexed [row][col]):
+  //   L1 : lever[3][1]  → lamp[3][5]
+  //   L2 : lever[3][1]  → lamp[3][6]
+  //   L3 : lever[3][1]  → lamp[3][5]  (should be INVERTED)
+  //   L4 : leverRed[4][0], leverBlue[0][4] → lampRed[4][8], lampBlue[8][4]
+  //   L5 : lever[2][1], lever[6][1] → lamp[4][7]  (OR gate)
+  //   L6 : lever[2][1], lever[6][1] → lamp[4][7]  (NAND gate)
+  //   L8 : lever[4][1], lever[10][1] → lamp[7][13] (AND gate)
+  //   L7 : lever[4][1](SET), lever[10][1](RESET) → lamp[7][13] (latch)
+  //   L9 : lever[4][1], lever[12][1] → lamp[8][15] (XNOR)
+  //   L10: lever[5][1] (locked ON) → any NOTE_BLOCK must be powered
+
   const submitLevel = useCallback(async () => {
     if (!gridDataRef.current || !currentLevel) return;
 
     setIsVerifying(true);
     setIsPlaying(true);
-    setTickRate(60); // Faster simulation for verification
+    setTickRate(60);
     setFailureMessage(null);
 
-    const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+    const wait = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
-    // Identify interactive inputs for exhaustive testing
-    const inputs: { x: number, y: number }[] = [];
-    currentLevel.initialGrid.forEach((row, y) => {
-      row.forEach((cell, x) => {
-        if (cell.type === ComponentType.INPUT_LEVER) {
-          inputs.push({ x, y });
-        }
-      });
-    });
+    // Helper: force levers to a given map, wait, then read the grid.
+    const applyAndWait = async (levers: Record<string, boolean>) => {
+      setForcedLevers(levers);
+      await wait(1200);
+      return gridDataRef.current;
+    };
 
-    const combinations = Math.pow(2, inputs.length);
-    let allPassed = true;
-
-    // 1. Thoroughly wipe all dynamic state from the grid before verification
-    if (gridDataRef.current) {
-      const cleanGrid = gridDataRef.current.map(row => row.map(cell => {
-        const next = { ...cell };
-        // Reset power states
-        next.state = false;
-        next.nextState = false;
-        next.stateH = false;
-        next.stateV = false;
-        // Reset interactive state if not locked
-        if (!cell.isLocked) {
-          next.manualToggle = false;
-        }
-        // Reset component-specific state
-        if (cell.history) {
-          next.history = [];
-        }
-        return next;
-      }));
+    // ── Step 1: Clean all signal state from player's grid ──────────────────────
+    {
+      const cleanGrid = gridDataRef.current.map(row =>
+        row.map(cell => ({
+          ...cell,
+          state: false,
+          nextState: false,
+          stateH: false,
+          stateV: false,
+          manualToggle: cell.isLocked ? cell.manualToggle : false,
+          history: cell.history ? [] : cell.history,
+        }))
+      );
       setGridData(cleanGrid);
       gridDataRef.current = cleanGrid;
     }
 
-    // Power down all switches initially in the forcedLevers state
-    const initialState: Record<string, boolean> = {};
-    inputs.forEach(input => {
-      initialState[`${input.x},${input.y}`] = false;
-    });
-    setForcedLevers(initialState);
-    await wait(1500); // Settle simulation after reset
+    // All levers OFF initially — let circuit settle
+    setForcedLevers({});
+    await wait(800);
 
-    for (let i = 0; i < combinations; i++) {
-      const state: Record<string, boolean> = {};
-      const stateDesc: string[] = [];
+    // ── Step 2: Run level-specific truth table ─────────────────────────────────
+    type Case = {
+      label: string;
+      levers: Record<string, boolean>;
+      check: (grid: TileState[][]) => { ok: boolean; reason: string };
+    };
 
-      inputs.forEach((input, idx) => {
-        const val = (i & (1 << idx)) !== 0;
-        state[`${input.x},${input.y}`] = val;
-        stateDesc.push(`In(${input.x},${input.y})=${val ? 'ON' : 'OFF'}`);
-      });
-      setForcedLevers(state);
+    let cases: Case[] = [];
 
-      await wait(1500); // Wait for logic to propagate to outputs
+    // ── Level 1: Flow State — wire switch to lamp (simple pass-through) ──────
+    if (currentLevel.id === '1') {
+      cases = [
+        {
+          label: 'Switch OFF → Lamp OFF',
+          levers: { '1,3': false },
+          check: g => ({ ok: !g[3][5].state, reason: 'Lamp should be OFF when switch is OFF' }),
+        },
+        {
+          label: 'Switch ON → Lamp ON',
+          levers: { '1,3': true },
+          check: g => ({ ok: g[3][5].state, reason: 'Lamp should be ON when switch is ON' }),
+        },
+      ];
+    }
 
-      const currentGrid = gridDataRef.current;
-      if (!currentGrid) break;
+    // ── Level 2: Obstacle Course — wire switch to lamp around obstacles ──────
+    else if (currentLevel.id === '2') {
+      cases = [
+        {
+          label: 'Switch OFF → Lamp OFF',
+          levers: { '1,3': false },
+          check: g => ({ ok: !g[3][6].state, reason: 'Lamp should be OFF when switch is OFF' }),
+        },
+        {
+          label: 'Switch ON → Lamp ON',
+          levers: { '1,3': true },
+          check: g => ({ ok: g[3][6].state, reason: 'Lamp should be ON when switch is ON' }),
+        },
+      ];
+    }
 
-      let casePassed = true;
-      let reason = "";
+    // ── Level 3: The Big Flip — inverter, lamp should be opposite of switch ──
+    else if (currentLevel.id === '3') {
+      cases = [
+        {
+          label: 'Switch OFF → Lamp ON (inverted)',
+          levers: { '1,3': false },
+          check: g => ({ ok: g[3][5].state, reason: 'Lamp should be ON when switch is OFF (inverter required)' }),
+        },
+        {
+          label: 'Switch ON → Lamp OFF (inverted)',
+          levers: { '1,3': true },
+          check: g => ({ ok: !g[3][5].state, reason: 'Lamp should be OFF when switch is ON (inverter required)' }),
+        },
+      ];
+    }
 
-      // Logic Verification per level
-      if (currentLevel.id === '1' || currentLevel.id === '2') {
-        const inputState = Object.values(state)[0];
-        const lampX = currentLevel.id === '1' ? 5 : 6;
-        const lampY = 3;
-        if (currentGrid[lampY][lampX].state !== inputState) {
-          casePassed = false;
-          reason = `Output should be ${inputState ? 'ON' : 'OFF'}`;
-        }
-      } else if (currentLevel.id === '3') {
-        const inputState = Object.values(state)[0];
-        const lampX = 5;
-        const lampY = 3;
-        if (currentGrid[lampY][lampX].state === inputState) {
-          casePassed = false;
-          reason = `Output should be ${!inputState ? 'ON' : 'OFF'}`;
-        }
-      } else if (currentLevel.id === '4') {
-        const redIn = state['0,4'];
-        const blueIn = state['4,0'];
-        const redOut = currentGrid[4][8].state;
-        const blueOut = currentGrid[8][4].state;
-        if (redOut !== redIn || blueOut !== blueIn) {
-          casePassed = false;
-          reason = "Independent signal paths failed";
-        }
-      } else if (currentLevel.id === '5') {
-        // NAND logic: Only OFF when BOTH are ON
-        const in1 = state['1,2'];
-        const in2 = state['1,6'];
-        const expected = !(in1 && in2);
-        const lamp = currentGrid[4][7].state;
-        if (lamp !== expected) {
-          casePassed = false;
-          reason = `NAND logic failed. Should be ${expected ? 'ON' : 'OFF'}`;
-        }
-      } else if (currentLevel.id === '6') {
-        // OR gate logic: ON if either is ON
-        const in1 = state['1,2'];
-        const in2 = state['1,6'];
-        const expected = in1 || in2;
-        const lamp = currentGrid[4][7].state;
-        if (lamp !== expected) {
-          casePassed = false;
-          reason = `OR logic failed. Should be ${expected ? 'ON' : 'OFF'}`;
-        }
-      } else if (currentLevel.id === '8') {
-        // AND gate logic
-        const in1 = state['1,4'];
-        const in2 = state['1,10'];
-        const expected = in1 && in2;
-        const lamp = currentGrid[7][13].state;
-        if (lamp !== expected) {
-          casePassed = false;
-          reason = `AND logic failed. Should be ${expected ? 'ON' : 'OFF'}`;
-        }
-      } else if (currentLevel.id === '7') {
-        // Memory Cell test sequence
-        const testSequence = [
-          { s: true, r: false, exp: true, desc: "Set pulsed ON" },
-          { s: false, r: false, exp: true, desc: "Set pulsed OFF (Hold)" },
-          { s: false, r: true, exp: false, desc: "Reset pulsed ON" },
-          { s: false, r: false, exp: false, desc: "Reset pulsed OFF (Clear)" }
-        ];
+    // ── Level 4: Bridge the Gap — two independent signal paths ──────────────
+    else if (currentLevel.id === '4') {
+      cases = [
+        {
+          label: 'Both OFF → Both lamps OFF',
+          levers: { '0,4': false, '4,0': false },
+          check: g => ({
+            ok: !g[4][8].state && !g[8][4].state,
+            reason: 'Both lamps should be OFF',
+          }),
+        },
+        {
+          label: 'Red ON, Blue OFF → Red lamp ON only',
+          levers: { '0,4': true, '4,0': false },
+          check: g => ({
+            ok: g[4][8].state && !g[8][4].state,
+            reason: 'Red lamp should be ON, Blue lamp should be OFF',
+          }),
+        },
+        {
+          label: 'Red OFF, Blue ON → Blue lamp ON only',
+          levers: { '0,4': false, '4,0': true },
+          check: g => ({
+            ok: !g[4][8].state && g[8][4].state,
+            reason: 'Blue lamp should be ON, Red lamp should be OFF',
+          }),
+        },
+        {
+          label: 'Both ON → Both lamps ON',
+          levers: { '0,4': true, '4,0': true },
+          check: g => ({
+            ok: g[4][8].state && g[8][4].state,
+            reason: 'Both lamps should be ON',
+          }),
+        },
+      ];
+    }
 
-        for (const step of testSequence) {
-          setForcedLevers({ '1,4': step.s, '1,10': step.r });
-          await wait(1500);
-          if (gridDataRef.current?.[7][13].state !== step.exp) {
-            allPassed = false;
-            setFailureMessage(`LATCH ERROR: [${step.desc}]. Output should be ${step.exp ? 'ON' : 'OFF'}.`);
-            setIsVerifying(false);
-            return;
-          }
-        }
-        break;
-      } else if (currentLevel.id === '9') {
-        // XNOR logic (Equivalence)
-        const in1 = state['1,4'];
-        const in2 = state['1,12'];
-        const expected = (in1 === in2);
-        const lamp = currentGrid[8][15].state;
-        if (lamp !== expected) {
-          casePassed = false;
-          reason = `Equivalence (XNOR) failed. Should be ${expected ? 'ON' : 'OFF'}`;
-        }
-      } else if (currentLevel.id === '10') {
-        // Note Block level: Should follow the input state
-        const inputState = Object.values(state)[0]; // The locked power source or placed lever
-        let noteBlockFound = false;
-        let noteBlockIncorrect = false;
+    // ── Level 6: Merge Mania (OR) — lamp ON if either switch is ON ──────────
+    else if (currentLevel.id === '6') {
+      cases = [
+        {
+          label: 'Both OFF → Lamp OFF',
+          levers: { '1,2': false, '1,6': false },
+          check: g => ({ ok: !g[4][7].state, reason: 'Lamp should be OFF when both switches are OFF' }),
+        },
+        {
+          label: 'A ON, B OFF → Lamp ON',
+          levers: { '1,2': true, '1,6': false },
+          check: g => ({ ok: g[4][7].state, reason: 'Lamp should be ON when switch A is ON' }),
+        },
+        {
+          label: 'A OFF, B ON → Lamp ON',
+          levers: { '1,2': false, '1,6': true },
+          check: g => ({ ok: g[4][7].state, reason: 'Lamp should be ON when switch B is ON' }),
+        },
+        {
+          label: 'Both ON → Lamp ON',
+          levers: { '1,2': true, '1,6': true },
+          check: g => ({ ok: g[4][7].state, reason: 'Lamp should be ON when both switches are ON' }),
+        },
+      ];
+    }
 
-        for (let y = 0; y < currentGrid.length; y++) {
-          for (let x = 0; x < currentGrid[y].length; x++) {
-            if (currentGrid[y][x].type === ComponentType.NOTE_BLOCK) {
-              noteBlockFound = true;
-              if (currentGrid[y][x].state !== inputState) {
-                noteBlockIncorrect = true;
-              }
-            }
-          }
-        }
+    // ── Level 5: The Paradox (NAND) — OFF only when BOTH are ON ─────────────
+    else if (currentLevel.id === '5') {
+      cases = [
+        {
+          label: 'Both OFF → Lamp ON',
+          levers: { '1,2': false, '1,6': false },
+          check: g => ({ ok: g[4][7].state, reason: 'NAND: Lamp should be ON when both switches are OFF' }),
+        },
+        {
+          label: 'A ON, B OFF → Lamp ON',
+          levers: { '1,2': true, '1,6': false },
+          check: g => ({ ok: g[4][7].state, reason: 'NAND: Lamp should be ON when only A is ON' }),
+        },
+        {
+          label: 'A OFF, B ON → Lamp ON',
+          levers: { '1,2': false, '1,6': true },
+          check: g => ({ ok: g[4][7].state, reason: 'NAND: Lamp should be ON when only B is ON' }),
+        },
+        {
+          label: 'Both ON → Lamp OFF',
+          levers: { '1,2': true, '1,6': true },
+          check: g => ({ ok: !g[4][7].state, reason: 'NAND: Lamp should be OFF only when BOTH switches are ON' }),
+        },
+      ];
+    }
 
-        if (!noteBlockFound) {
-          casePassed = false;
-          reason = "No Note Block detected on the grid";
-        } else if (noteBlockIncorrect) {
-          casePassed = false;
-          reason = `Note Block should be ${inputState ? 'POWERED' : 'SILENT'}`;
+    // ── Level 8: Signal Sync (AND) — ON only when BOTH are ON ───────────────
+    else if (currentLevel.id === '8') {
+      cases = [
+        {
+          label: 'Both OFF → Lamp OFF',
+          levers: { '1,4': false, '1,10': false },
+          check: g => ({ ok: !g[7][13].state, reason: 'AND: Lamp should be OFF when both switches are OFF' }),
+        },
+        {
+          label: 'A ON, B OFF → Lamp OFF',
+          levers: { '1,4': true, '1,10': false },
+          check: g => ({ ok: !g[7][13].state, reason: 'AND: Lamp should be OFF when only A is ON' }),
+        },
+        {
+          label: 'A OFF, B ON → Lamp OFF',
+          levers: { '1,4': false, '1,10': true },
+          check: g => ({ ok: !g[7][13].state, reason: 'AND: Lamp should be OFF when only B is ON' }),
+        },
+        {
+          label: 'Both ON → Lamp ON',
+          levers: { '1,4': true, '1,10': true },
+          check: g => ({ ok: g[7][13].state, reason: 'AND: Lamp should be ON only when BOTH switches are ON' }),
+        },
+      ];
+    }
+
+    // ── Level 9: The Equivalence (XNOR) — ON when inputs are the same ───────
+    else if (currentLevel.id === '9') {
+      cases = [
+        {
+          label: 'Both OFF → Lamp ON (equal)',
+          levers: { '1,4': false, '1,12': false },
+          check: g => ({ ok: g[8][15].state, reason: 'XNOR: Lamp should be ON when both are OFF (equal)' }),
+        },
+        {
+          label: 'A ON, B OFF → Lamp OFF (not equal)',
+          levers: { '1,4': true, '1,12': false },
+          check: g => ({ ok: !g[8][15].state, reason: 'XNOR: Lamp should be OFF when inputs differ' }),
+        },
+        {
+          label: 'A OFF, B ON → Lamp OFF (not equal)',
+          levers: { '1,4': false, '1,12': true },
+          check: g => ({ ok: !g[8][15].state, reason: 'XNOR: Lamp should be OFF when inputs differ' }),
+        },
+        {
+          label: 'Both ON → Lamp ON (equal)',
+          levers: { '1,4': true, '1,12': true },
+          check: g => ({ ok: g[8][15].state, reason: 'XNOR: Lamp should be ON when both are ON (equal)' }),
+        },
+      ];
+    }
+
+    // ── Level 7: Memory Cell (SR Latch) — sequential state test ─────────────
+    else if (currentLevel.id === '7') {
+      const latchSequence = [
+        { label: 'Set ON (S=1, R=0) → Lamp ON',     levers: { '1,4': true,  '1,10': false }, expected: true  },
+        { label: 'Set OFF (S=0, R=0) → Lamp stays ON', levers: { '1,4': false, '1,10': false }, expected: true  },
+        { label: 'Reset ON (S=0, R=1) → Lamp OFF',   levers: { '1,4': false, '1,10': true  }, expected: false },
+        { label: 'Reset OFF (S=0, R=0) → Lamp stays OFF', levers: { '1,4': false, '1,10': false }, expected: false },
+      ];
+
+      for (const step of latchSequence) {
+        const g = await applyAndWait(step.levers);
+        if (!g) break;
+        if (g[7][13].state !== step.expected) {
+          setFailureMessage(`LATCH ERROR: [${step.label}]. Lamp should be ${step.expected ? 'ON' : 'OFF'}.`);
+          setIsVerifying(false);
+          setForcedLevers({});
+          return;
         }
       }
 
-      if (!casePassed) {
-        allPassed = false;
-        setFailureMessage(`LOGIC ERROR: Failed Case [${stateDesc.join(', ')}]. ${reason}.`);
+      // All latch steps passed
+      setIsVerifying(false);
+      setIsPlaying(false);
+      setTickRate(10);
+      setForcedLevers({});
+      setIsWinning(true);
+      setCompletedLevels(prev => prev.includes(currentLevel.id) ? prev : [...prev, currentLevel.id]);
+      if (gridDataRef.current) setSavedSolutions(prev => ({ ...prev, [currentLevel.id]: gridDataRef.current! }));
+      return;
+    }
+
+    // ── Level 10: Musical Foundations — Note Block must be powered ───────────
+    else if (currentLevel.id === '10') {
+      // The lever at [5][1] is locked ON. Player must connect a Note Block to it.
+      cases = [
+        {
+          label: 'Locked lever ON → at least one Note Block powered',
+          levers: {}, // lever is locked ON in the grid already
+          check: g => {
+            let found = false;
+            for (let y = 0; y < g.length; y++)
+              for (let x = 0; x < g[y].length; x++)
+                if (g[y][x].type === ComponentType.NOTE_BLOCK && g[y][x].state) found = true;
+            return { ok: found, reason: 'At least one Note Block must be powered by the lever' };
+          },
+        },
+      ];
+    }
+
+    // ── Step 3: Execute normal (non-sequential) test cases ────────────────────
+    for (const testCase of cases) {
+      const g = await applyAndWait(testCase.levers);
+      if (!g) break;
+
+      const { ok, reason } = testCase.check(g);
+      if (!ok) {
+        setFailureMessage(`LOGIC ERROR: [${testCase.label}] — ${reason}.`);
         setIsVerifying(false);
+        setForcedLevers({});
         return;
       }
     }
 
+    // ── Step 4: All cases passed ───────────────────────────────────────────────
     setIsVerifying(false);
     setIsPlaying(false);
     setTickRate(10);
     setForcedLevers({});
-
-    if (allPassed) {
-      setIsWinning(true);
-      if (currentLevel) {
-        setCompletedLevels(prev => prev.includes(currentLevel.id) ? prev : [...prev, currentLevel.id]);
-        if (gridDataRef.current) {
-          setSavedSolutions(prev => ({ ...prev, [currentLevel.id]: gridDataRef.current! }));
-        }
-      }
-      if (currentLevel?.id === '5' && !completedLevels.includes('5')) {
-        setShowCompletionPrompt(true);
-      }
-    } else {
-      setFailureMessage(failureQuotes[Math.floor(Math.random() * failureQuotes.length)]);
-    }
-  }, [currentLevel, failureQuotes, completedLevels]);
+    setIsWinning(true);
+    setCompletedLevels(prev => prev.includes(currentLevel.id) ? prev : [...prev, currentLevel.id]);
+    if (gridDataRef.current) setSavedSolutions(prev => ({ ...prev, [currentLevel.id]: gridDataRef.current! }));
+    if (currentLevel.id === '5' && !completedLevels.includes('5')) setShowCompletionPrompt(true);
+  }, [currentLevel, completedLevels]);
 
   const onResetLevel = useCallback(() => {
     if (!currentLevel) return;
@@ -1893,6 +2105,7 @@ export default function App() {
             bufferConfig={bufferConfig}
             setBufferConfig={setBufferConfig}
             onNotePlay={playNote}
+            onPlace={playPlacementSound}
           />
         )}
 
@@ -1929,6 +2142,7 @@ export default function App() {
             bufferConfig={bufferConfig}
             setBufferConfig={setBufferConfig}
             onNotePlay={playNote}
+            onPlace={playPlacementSound}
           />
         )}
       </AnimatePresence>

@@ -23,6 +23,7 @@ interface LogicCanvasProps {
   onNoteBlockClick?: (x: number, y: number, currentNote: string) => void;
   onBufferClick?: (x: number, y: number, currentDelay: number) => void;
   onNotePlay?: (noteKey: string) => void;
+  onPlace?: (type: ComponentType) => void;
 }
 
 export const LogicCanvas: React.FC<LogicCanvasProps> = ({
@@ -44,7 +45,8 @@ export const LogicCanvas: React.FC<LogicCanvasProps> = ({
   activeSandbox,
   onNoteBlockClick,
   onBufferClick,
-  onNotePlay
+  onNotePlay,
+  onPlace
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -379,6 +381,7 @@ export const LogicCanvas: React.FC<LogicCanvasProps> = ({
       setGrid(prev => {
         const next = [...prev.map(row => [...row])];
         next[y][x] = { ...next[y][x], manualToggle: !next[y][x].manualToggle };
+        if (onPlace) onPlace(ComponentType.INPUT_LEVER);
         return !isPlaying ? tickGrid(next) : next;
       });
       return;
@@ -443,7 +446,9 @@ export const LogicCanvas: React.FC<LogicCanvasProps> = ({
         const currentIndex = directions.indexOf(cell.direction);
         const nextDir = directions[(currentIndex + 1) % 4];
         next[y][x] = { ...cell, direction: nextDir };
+        if (onPlace) onPlace(cell.type);
       } else if (cell.type !== selectedComponent) {
+        if (onPlace) onPlace(selectedComponent);
         let placementDirection = selectedDirection;
         if (selectedComponent === ComponentType.INVERTER) {
           const checkDirs = [
